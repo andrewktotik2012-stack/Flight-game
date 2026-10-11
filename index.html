@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Flight Simulator</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#87ceeb;font-family:Arial;touch-action:none}
+#app{position:fixed;inset:0}
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10;color:#fff;text-shadow:0 0 4px #000}
+
+/* Левая панель — приборы */
+#leftPanel{position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:6px}
+.gauge{width:90px;height:90px;background:rgba(0,0,0,.55);border-radius:50%;position:relative}
+.gauge canvas{width:90px;height:90px}
+.gauge .lbl{position:absolute;bottom:4px;left:0;right:0;text-align:center;font-size:9px;color:#8af}
+
+/* Правая панель — состояние систем */
+#rightPanel{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);padding:6px 10px;border-radius:8px;font-size:11px;line-height:1.6;min-width:140px}
+#rightPanel .row{display:flex;justify-content:space-between;gap:10px}
+#rightPanel .lbl{color:#8af}
+#rightPanel .val{color:#ff0;font-weight:bold}
+#rightPanel .ok{color:#4f4}
+#rightPanel .warn{color:#f44}
+
+/* Центр — прицел-авиагоризонт */
+#crosshair{position:absolute;top:50%;left:50%;width:40px;height:40px;margin:-20px 0 0 -20px;pointer-events:none}
+#crosshair::before{content:'';position:absolute;left:19px;top:0;width:2px;height:40px;background:rgba(0,255,0,.8)}
+#crosshair::after{content:'';position:absolute;top:19px;left:0;height:2px;width:40px;background:rgba(0,255,0,.8)}
+
+/* Нижняя панель — управление */
+#bottomPanel{position:fixed;bottom:0;left:0;right:0;z-index:11;padding:6px 8px calc(6px + env(safe-area-inset-bottom));background:linear-gradient(to top,rgba(0,0,0,.8),transparent)}
+
+#mainControls{display:flex;justify-content:space-between;align-items:flex-end;gap:6px}
+
+/* Педали слева */
+#pedals{display:flex;gap:6px}
+.pedal{
+  width:56px;height:56px;border-radius:50%;
+  background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.5);
+  color:#fff;font-size:10px;font-weight:bold;
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  touch-action:manipulation;
+}
+.pedal.pressed{background:rgba(255,180,80,.7)}
+
+/* Тяга по центру */
+#throttleBox{flex:1;max-width:180px}
+#throttleLabel{text-align:center;font-size:10px;color:#8af;margin-bottom:2px}
+#throttleBar{height:14px;background:rgba(0,0,0,.6);border:1px solid #fff;border-radius:4px;position:relative;overflow:hidden}
+#throttleFill{height:100%;background:linear-gradient(to right,#0a0,#0f0,#ff0,#f80);width:0%;transition:width .1s}
+#throttleValue{text-align:center;font-size:11px;color:#ff0;margin-top:2px}
+
+/* Вспомогательные кнопки справа */
+#auxButtons{display:flex;flex-direction:column;gap:4px}
+.auxBtn{
+  padding:6px 8px;border-radius:6px;
+  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.5);
+  color:#fff;font-size:10px;font-weight:bold;
+  touch-action:manipulation;
+}
+.auxBtn.active{background:rgba(80,200,80,.7);border-color:#5f5}
+.auxBtn.pressed{background:rgba(255,150,80,.8)}
+
+/* Средний ряд — газ/тормоз */
+#mainRow{display:flex;justify-content:space-between;gap:6px;margin-bottom:6px}
+.bigBtn{
+  flex:1;height:52px;border-radius:10px;
+  background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.5);
+  color:#fff;font-size:13px;font-weight:bold;
+  touch-action:manipulation;
+}
+.bigBtn.pressed{background:rgba(255,80,80,.7)}
+#gasBtn{background:rgba(80,180,80,.3)}
+#gasBtn.pressed{background:rgba(100,220,100,.8)}
+
+#msg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;background:rgba(0,0,0,.85);padding:14px 22px;border-radius:10px;font-size:14px;z-index:15;display:none;text-align:center;max-width:80%;pointer-events:auto}
+#msg.on{display:block}
+#startHint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;background:rgba(0,0,0,.85);padding:16px 20px;border-radius:10px;font-size:12px;z-index:14;text-align:center;line-height:1.7;border:2px solid #4f4;max-width:88%;pointer-events:auto}
+#startHint.hidden{display:none}
+#startHint b{color:#4f4}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <div id="leftPanel">
+    <div class="gauge"><canvas id="asiCanvas" width="180" height="180"></canvas><div class="lbl">СКОРОСТЬ</div></div>
+    <div class="gauge"><canvas id="altCanvas" width="180" height="180"></canvas><div class="lbl">ВЫСОТА</div></div>
+    <div class="gauge"><canvas id="vsiCanvas" width="180" height="180"></canvas><div class="lbl">ВАРИОМЕТР</div></div>
+  </div>
+  <div id="rightPanel">
+    <div class="row"><span class="lbl">Тяга:</span><span class="val" id="rThrottle">0%</span></div>
+    <div class="row"><span class="lbl">Закрылки:</span><span class="val" id="rFlaps">0</span></div>
+    <div class="row"><span class="lbl">Спойлеры:</span><span class="val" id="rSpoiler">УБР</span></div>
+    <div class="row"><span class="lbl">Шасси:</span><span class="val ok" id="rGear">ВЫП</span></div>
+    <div class="row"><span class="lbl">Тормоза:</span><span class="val" id="rBrake">ОТКЛ</span></div>
+    <div class="row"><span class="lbl">Реверс:</span><span class="val" id="rReverse">ОТКЛ</span></div>
+    <div class="row"><span class="lbl">Автопилот:</span><span class="val" id="rAp">ОТКЛ</span></div>
+  </div>
+  <div id="crosshair"></div>
+</div>
+
+<div id="bottomPanel">
+  <div id="mainRow">
+    <button class="bigBtn" id="gasBtn">ГАЗ ▲</button>
+    <button class="bigBtn" id="brakeBtn">ТОРМОЗ</button>
+  </div>
+  <div id="mainControls">
+    <div id="pedals">
+      <button class="pedal" id="pedL">◄ РУЛЬ</button>
+      <button class="pedal" id="pedR">РУЛЬ ►</button>
+    </div>
+    <div id="throttleBox">
+      <div id="throttleLabel">ТЯГА</div>
+      <div id="throttleBar"><div id="throttleFill"></div></div>
+      <div id="throttleValue">0%</div>
+    </div>
+    <div id="auxButtons">
+      <button class="auxBtn" id="flapsBtn">ЗАКРЫЛКИ</button>
+      <button class="auxBtn" id="spoilerBtn">СПОЙЛЕРЫ</button>
+      <button class="auxBtn" id="gearBtn">ШАССИ</button>
+      <button class="auxBtn" id="reverseBtn">РЕВЕРС</button>
+      <button class="auxBtn" id="apBtn">АВТОПИЛОТ</button>
+    </div>
+  </div>
+</div>
+
+<div id="msg"></div>
+<div id="startHint">
+  <b>Управление самолётом:</b><br>
+  <b>Свайп по экрану</b> — штурвал<br>
+  <b>ГАЗ</b> — увеличить тягу<br>
+  <b>ТОРМОЗ</b> — тормоза колёс<br>
+  <b>◄ РУЛЬ ►</b> — педали (руль направления)<br>
+  <b>ЗАКРЫЛКИ</b> — 0→1→2→3 (для взлёта)<br>
+  <b>ШАССИ</b> — убрать/выпустить<br>
+  <b>РЕВЕРС</b> — только после касания<br>
+  <br>
+  <i>Тапни сюда чтобы начать</i>
+</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+// ============ СЦЕНА ============
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+scene.fog=new THREE.Fog(0x87ceeb,300,1500);
+
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,3000);
+const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.3));
+renderer.setSize(innerWidth,innerHeight);
+document.getElementById('app').appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x445566,1.1));
+const sun=new THREE.DirectionalLight(0xffffff,1.4);
+sun.position.set(100,200,80);
+scene.add(sun);
+
+// ============ ЗЕМЛЯ ============
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(3000,3000),new THREE.MeshLambertMaterial({color:0x4a6a3a}));
+ground.rotation.x=-Math.PI/2;
+scene.add(ground);
+
+// ============ АЭРОПОРТ ============
+const runwayLength=800;
+const runwayWidth=40;
+const runway=new THREE.Mesh(new THREE.PlaneGeometry(runwayLength,runwayWidth),new THREE.MeshLambertMaterial({color:0x2a2a2a}));
+runway.rotation.x=-Math.PI/2;
+runway.position.set(0,.01,0);
+scene.add(runway);
+
+// разметка ВПП
+const lineMat=new THREE.MeshBasicMaterial({color:0xffffff});
+// осевая прерывистая
+for(let i=-runwayLength/2+10;i<runwayLength/2-10;i+=25){
+  const l=new THREE.Mesh(new THREE.PlaneGeometry(10,1.2),lineMat);
+  l.rotation.x=-Math.PI/2;l.position.set(i,.02,0);
+  scene.add(l);
+}
+// полосы на торцах
+for(let side of[-1,1]){
+  for(let k=-3;k<=3;k++){
+    const l=new THREE.Mesh(new THREE.PlaneGeometry(15,1.2),lineMat);
+    l.rotation.x=-Math.PI/2;l.position.set(side*(runwayLength/2-10),.02,k*4);
+    scene.add(l);
+  }
+}
+// рулёжные дорожки
+const taxiMat=new THREE.MeshLambertMaterial({color:0x3a3a3a});
+for(let side of[-1,1]){
+  const t=new THREE.Mesh(new THREE.PlaneGeometry(15,60),taxiMat);
+  t.rotation.x=-Math.PI/2;t.position.set(side*(runwayLength/2-80),.01,side*40);
+  scene.add(t);
+}
+
+// ============ АНГАРЫ И ТЕРМИНАЛ ============
+function mkBuilding(x,z,w,h,d,color){
+  const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color:color}));
+  b.position.set(x,h/2,z);
+  scene.add(b);
+}
+mkBuilding(-200,80,60,14,30,0xaaaaaa);  // терминал
+mkBuilding(-150,120,40,12,25,0x888888); // ангар 1
+mkBuilding(-100,120,40,12,25,0x888888); // ангар 2
+mkBuilding(200,-100,30,20,30,0x999999); // вышка связи
+
+// ============ ВЕТРЯКИ ЗА АЭРОПОРТОМ ============
+const windmills=[];
+function mkWindmill(x,z){
+  const g=new THREE.Group();
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(.8,1.2,40,8),new THREE.MeshLambertMaterial({color:0xeeeeee}));
+  pole.position.y=20;g.add(pole);
+  const hub=new THREE.Mesh(new THREE.SphereGeometry(1.5,10,10),new THREE.MeshLambertMaterial({color:0xcccccc}));
+  hub.position.set(0,40,1.5);g.add(hub);
+  const blades=[];
+  for(let i=0;i<3;i++){
+    const bl=new THREE.Group();
+    const b=new THREE.Mesh(new THREE.BoxGeometry(.8,18,.3),new THREE.MeshLambertMaterial({color:0xf0f0f0}));
+    b.position.y=9;bl.add(b);
+    bl.rotation.z=(i/3)*Math.PI*2;
+    bl.position.set(0,40,1.8);
+    g.add(bl);blades.push(bl);
+  }
+  g.position.set(x,0,z);
+  g.userData={blades:blades};
+  scene.add(g);windmills.push(g);
+}
+mkWindmill(-400,400);
+mkWindmill(-350,450);
+mkWindmill(400,400);
+mkWindmill(450,450);
+
+// ============ ДЕРЕВЬЯ ВДАЛИ ============
+for(let i=0;i<80;i++){
+  const a=Math.random()*Math.PI*2;
+  const r=600+Math.random()*600;
+  const x=Math.cos(a)*r;
+  const z=Math.sin(a)*r;
+  const tree=new THREE.Mesh(new THREE.ConeGeometry(8+Math.random()*4,20+Math.random()*10,6),new THREE.MeshLambertMaterial({color:0x2a5a2a}));
+  tree.position.set(x,10,z);
+  scene.add(tree);
+}
+
+// ============ САМОЛЁТ (модель) ============
+const plane={};
+plane.group=new THREE.Group();
+
+// фюзеляж
+const fuselage=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,12,12),new THREE.MeshLambertMaterial({color:0xeeeeee}));
+fuselage.rotation.z=Math.PI/2;
+plane.group.add(fuselage);
+
+// нос
+const nose=new THREE.Mesh(new THREE.ConeGeometry(1.2,2.5,12),new THREE.MeshLambertMaterial({color:0xdddddd}));
+nose.rotation.z=-Math.PI/2;
+nose.position.x=7.2;
+plane.group.add(nose);
+
+// кабина
+const cabin=new THREE.Mesh(new THREE.SphereGeometry(1.4,12,10,0,Math.PI*2,0,Math.PI/2),new THREE.MeshLambertMaterial({color:0x224466,transparent:true,opacity:.7}));
+cabin.position.set(2.5,1,.0);
+cabin.scale.set(1,.7,1);
+plane.group.add(cabin);
+
+// крылья
+const wingMat=new THREE.MeshLambertMaterial({color:0xcccccc});
+const wing=new THREE.Mesh(new THREE.BoxGeometry(4,.4,20),wingMat);
+wing.position.x=0;
+plane.group.add(wing);
+
+// хвост — горизонтальный
+const tailH=new THREE.Mesh(new THREE.BoxGeometry(2.5,.3,6),wingMat);
+tailH.position.set(-5.5,1,0);
+plane.group.add(tailH);
+
+// хвост — вертикальный
+const tailV=new THREE.Mesh(new THREE.BoxGeometry(2,3,.3),wingMat);
+tailV.position.set(-5.5,1.8,0);
+plane.group.add(tailV);
+
+// двигатели
+const engMat=new THREE.MeshLambertMaterial({color:0x333333});
+for(const zz of[-4,4]){
+  const e=new THREE.Mesh(new THREE.CylinderGeometry(.9,.9,3.5,10),engMat);
+  e.rotation.z=Math.PI/2;
+  e.position.set(0,-1,zz);
+  plane.group.add(e);
+}
+
+// шасси (колёса)
+plane.gear=[];
+const wheelGeo=new THREE.CylinderGeometry(.5,.5,.3,10);
+const wheelMat=new THREE.MeshLambertMaterial({color:0x111111});
+for(const pos of[[1,0,-2.5],[1,0,2.5],[-4.5,0,0]]){
+  const w=new THREE.Mesh(wheelGeo,wheelMat);
+  w.rotation.z=Math.PI/2;
+  w.position.set(pos[0],-1.5,pos[2]);
+  plane.group.add(w);
+  plane.gear.push(w);
+}
+
+// винты двигателей
+plane.propellers=[];
+for(const zz of[-4,4]){
+  const p=new THREE.Mesh(new THREE.BoxGeometry(.1,2.5,.3),new THREE.MeshLambertMaterial({color:0x999999}));
+  p.position.set(1.8,-1,zz);
+  plane.group.add(p);
+  plane.propellers.push(p);
+}
+
+plane.group.position.set(-350,1.5,0);
+scene.add(plane.group);
+// ============ СОСТОЯНИЕ САМОЛЁТА ============
+const state={
+  // позиция и углы
+  x:-350, y:1.5, z:0,
+  // ориентация: pitch (нос вверх/вниз), roll (крен), yaw (курс)
+  pitch:0, roll:0, yaw:0,
+  // скорость по осям (м/с)
+  vx:0, vy:0, vz:0,
+  // скорость по прибору (м/с)
+  ias:0,
+  // высота над уровнем моря
+  alt:0,
+  // вертикальная скорость
+  vs:0,
+  // управление
+  throttle:0,      // 0..1
+  elevator:0,      // -1..1 (нос вверх/вниз)
+  aileron:0,       // -1..1 (крен)
+  rudder:0,        // -1..1 (руль направления)
+  // конфигурация
+  flaps:0,         // 0..3
+  spoilers:false,
+  gearDown:true,
+  brakes:false,
+  reverse:false,
+  autopilot:false,
+  apTargetAlt:0,
+  // состояние
+  onGround:true,
+  stalled:false,
+  crashed:false
+};
+
+const MASS=8000;       // масса самолёта
+const GRAVITY=9.81;
+const MAX_THRUST=60000; // макс тяга
+const WING_AREA=30;
+const CL0=0.3, CLalpha=4.5; // подъёмная сила
+const CD0=0.025;            // лобовое сопротивление
+
+// ============ УПРАВЛЕНИЕ ШТУРВАЛОМ (СВАЙП) ============
+const dom=renderer.domElement;
+let swipeTouch=null;
+let swipeStartX=0, swipeStartY=0;
+let swipeActive=false;
+
+dom.addEventListener('touchstart',e=>{
+  // Игнорируем тачи по кнопкам HUD (они выше z-index)
+  if(e.target.closest('#bottomPanel')||e.target.closest('#hud')||e.target.closest('#startHint'))return;
+  if(e.touches.length!==1)return;
+  const t=e.touches[0];
+  swipeActive=true;
+  swipeTouch={x:t.clientX,y:t.clientY};
+  swipeStartX=t.clientX;
+  swipeStartY=t.clientY;
+},{passive:true});
+
+dom.addEventListener('touchmove',e=>{
+  if(!swipeActive||!swipeTouch||e.touches.length!==1)return;
+  const t=e.touches[0];
+  const dx=t.clientX-swipeStartX;
+  const dy=t.clientY-swipeStartY;
+  // aileron — влево/вправо (макс ±180 пикс)
+  const aileronVal=Math.max(-1,Math.min(1,dx/180));
+  // elevator — вверх/вниз (dy>0 — палец вниз — нос вниз)
+  const elevVal=Math.max(-1,Math.min(1,dy/180));
+  state.aileron=aileronVal;
+  state.elevator=-elevVal;  // инвертируем: палец вниз = нос вверх (как в симуляторах)
+},{passive:true});
+
+dom.addEventListener('touchend',e=>{
+  if(e.touches.length===0){
+    swipeActive=false;swipeTouch=null;
+    // возврат штурвала в 0
+    state.aileron=0;
+    state.elevator=0;
+  }
+},{passive:true});
+
+// ПК — мышь для теста
+let mouseDown=false, mouseStartX=0, mouseStartY=0;
+dom.addEventListener('mousedown',e=>{
+  if(e.target.closest('#bottomPanel')||e.target.closest('#hud'))return;
+  mouseDown=true;mouseStartX=e.clientX;mouseStartY=e.clientY;
+});
+dom.addEventListener('mousemove',e=>{
+  if(!mouseDown)return;
+  const dx=e.clientX-mouseStartX;
+  const dy=e.clientY-mouseStartY;
+  state.aileron=Math.max(-1,Math.min(1,dx/180));
+  state.elevator=-Math.max(-1,Math.min(1,dy/180));
+});
+dom.addEventListener('mouseup',()=>{
+  mouseDown=false;
+  state.aileron=0;state.elevator=0;
+});
+
+// ============ ПЕДАЛИ (РУЛЬ НАПРАВЛЕНИЯ) ============
+function bindHold(elId, onPress, onRelease){
+  const el=document.getElementById(elId);
+  const press=function(e){if(e){e.preventDefault();e.stopPropagation();}el.classList.add('pressed');onPress();};
+  const release=function(e){if(e){e.preventDefault();e.stopPropagation();}el.classList.remove('pressed');if(onRelease)onRelease();};
+  el.addEventListener('touchstart',press,{passive:false});
+  el.addEventListener('touchend',release,{passive:false});
+  el.addEventListener('touchcancel',release,{passive:false});
+  el.addEventListener('mousedown',press);
+  el.addEventListener('mouseup',release);
+  el.addEventListener('mouseleave',release);
+}
+bindHold('pedL',()=>{state.rudder=-1;},()=>{if(state.rudder===-1)state.rudder=0;});
+bindHold('pedR',()=>{state.rudder=1;},()=>{if(state.rudder===1)state.rudder=0;});
+
+// ============ ГАЗ / ТОРМОЗ ============
+bindHold('gasBtn',()=>{state.throttle=Math.min(1,state.throttle+0.02);},{});
+bindHold('brakeBtn',()=>{state.brakes=true;},()=>{state.brakes=false;});
+
+// ============ ВСПОМОГАТЕЛЬНЫЕ КНОПКИ ============
+document.getElementById('flapsBtn').addEventListener('click',()=>{
+  state.flaps=(state.flaps+1)%4;
+  document.getElementById('rFlaps').textContent=state.flaps;
+  if(navigator.vibrate)navigator.vibrate(30);
+});
+document.getElementById('spoilerBtn').addEventListener('click',function(){
+  state.spoilers=!state.spoilers;
+  this.classList.toggle('active',state.spoilers);
+  document.getElementById('rSpoiler').textContent=state.spoilers?'ВЫП':'УБР';
+});
+document.getElementById('gearBtn').addEventListener('click',function(){
+  if(state.alt>5&&state.onGround===false){
+    showMsg('Низко для шасси!');
+    return;
+  }
+  state.gearDown=!state.gearDown;
+  this.classList.toggle('active',!state.gearDown);
+  document.getElementById('rGear').textContent=state.gearDown?'ВЫП':'УБР';
+  document.getElementById('rGear').className='val '+(state.gearDown?'ok':'warn');
+  // показать/скрыть колёса
+  for(const w of plane.gear)w.visible=state.gearDown;
+});
+document.getElementById('reverseBtn').addEventListener('click',function(){
+  if(!state.onGround){showMsg('Реверс только на земле');return;}
+  state.reverse=!state.reverse;
+  this.classList.toggle('active',state.reverse);
+  document.getElementById('rReverse').textContent=state.reverse?'ВКЛ':'ОТКЛ';
+  document.getElementById('rReverse').className='val '+(state.reverse?'warn':'');
+});
+document.getElementById('apBtn').addEventListener('click',function(){
+  if(state.alt<50){showMsg('Автопилот только в воздухе');return;}
+  state.autopilot=!state.autopilot;
+  if(state.autopilot)state.apTargetAlt=state.alt;
+  this.classList.toggle('active',state.autopilot);
+  document.getElementById('rAp').textContent=state.autopilot?'ВКЛ':'ОТКЛ';
+  document.getElementById('rAp').className='val '+(state.autopilot?'ok':'');
+});
+
+// ============ HUD КНОПКА GAS УВЕЛИЧИВАЕТ ТЯГУ ПРИ УДЕРЖАНИИ ============
+let gasHoldInterval=null;
+const gasEl=document.getElementById('gasBtn');
+gasEl.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  gasEl.classList.add('pressed');
+  state.throttle=Math.min(1,state.throttle+0.05);
+  gasHoldInterval=setInterval(()=>{
+    state.throttle=Math.min(1,state.throttle+0.04);
+  },50);
+},{passive:false});
+gasEl.addEventListener('touchend',e=>{
+  e.preventDefault();
+  gasEl.classList.remove('pressed');
+  clearInterval(gasHoldInterval);
+},{passive:false});
+gasEl.addEventListener('touchcancel',()=>{gasEl.classList.remove('pressed');clearInterval(gasHoldInterval);});
+
+// Уменьшение тяги — долгое нажатие на "ТОРМОЗ" в воздухе? Нет — отдельная кнопка нужна. Сделаем уменьшение по свайпу вниз от throttle.
+// Проще: при нажатии на ТОРМОЗ, если на земле - тормозит, если в воздухе - ничего. Уменьшать тягу будем по долгому тапу на надпись ТЯГА.
+document.getElementById('throttleLabel').addEventListener('click',()=>{
+  state.throttle=Math.max(0,state.throttle-0.1);
+});
+
+// ============ СООБЩЕНИЯ ============
+function showMsg(text){
+  const m=document.getElementById('msg');
+  m.textContent=text;m.classList.add('on');
+  clearTimeout(m._t);
+  m._t=setTimeout(()=>m.classList.remove('on'),2000);
+}
+document.getElementById('startHint').addEventListener('click',function(){
+  this.classList.add('hidden');
+});
+
+// ============ ПРИБОРЫ ============
+const asiCtx=document.getElementById('asiCanvas').getContext('2d');
+const altCtx=document.getElementById('altCanvas').getContext('2d');
+const vsiCtx=document.getElementById('vsiCanvas').getContext('2d');
+
+function clearGauge(ctx){
+  const W=180,H=180,cx=90,cy=90;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='rgba(20,20,20,.85)';
+  ctx.beginPath();ctx.arc(cx,cy,85,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#444';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(cx,cy,85,0,Math.PI*2);ctx.stroke();
+  return {cx,cy};
+}
+
+// ASI — спидометр (0-300 узлов)
+function drawASI(){
+  const {cx,cy}=clearGauge(asiCtx);
+  const max=300;
+  const val=Math.min(max,state.ias*1.94384);  // м/с → узлы
+  // деления
+  asiCtx.strokeStyle='#aaa';asiCtx.lineWidth=1.5;
+  asiCtx.fillStyle='#fff';asiCtx.font='bold 9px Arial';asiCtx.textAlign='center';
+  for(let i=0;i<=12;i++){
+    const a=Math.PI*.75+(i/12)*Math.PI*1.5;
+    const x1=cx+Math.cos(a)*70,y1=cy+Math.sin(a)*70;
+    const x2=cx+Math.cos(a)*80,y2=cy+Math.sin(a)*80;
+    asiCtx.beginPath();asiCtx.moveTo(x1,y1);asiCtx.lineTo(x2,y2);asiCtx.stroke();
+    asiCtx.fillText(Math.round(max*i/12),cx+Math.cos(a)*58,cy+Math.sin(a)*58+3);
+  }
+  // зелёная зона (взлётная 130-160 узлов)
+  asiCtx.strokeStyle='#0f0';asiCtx.lineWidth=5;
+  const sA=Math.PI*.75+(130/max)*Math.PI*1.5;
+  const eA=Math.PI*.75+(160/max)*Math.PI*1.5;
+  asiCtx.beginPath();asiCtx.arc(cx,cy,72,sA,eA);asiCtx.stroke();
+  // стрелка
+  const a=Math.PI*.75+(val/max)*Math.PI*1.5;
+  asiCtx.strokeStyle='#ff3';asiCtx.lineWidth=3;
+  asiCtx.beginPath();asiCtx.moveTo(cx,cy);
+  asiCtx.lineTo(cx+Math.cos(a)*62,cy+Math.sin(a)*62);asiCtx.stroke();
+  asiCtx.fillStyle='#ddd';asiCtx.beginPath();asiCtx.arc(cx,cy,4,0,Math.PI*2);asiCtx.fill();
+  // цифровое значение
+  asiCtx.fillStyle='#0ff';asiCtx.font='bold 12px monospace';
+  asiCtx.fillText(Math.round(val)+' уз',cx,cy+30);
+}
+
+// ALT — высотомер (0-10000 м)
+function drawALT(){
+  const {cx,cy}=clearGauge(altCtx);
+  const max=10000;
+  const val=Math.min(max,state.alt);
+  altCtx.strokeStyle='#aaa';altCtx.lineWidth=1.5;
+  altCtx.fillStyle='#fff';altCtx.font='bold 9px Arial';altCtx.textAlign='center';
+  for(let i=0;i<=10;i++){
+    const a=Math.PI*.75+(i/10)*Math.PI*1.5;
+    const x1=cx+Math.cos(a)*70,y1=cy+Math.sin(a)*70;
+    const x2=cx+Math.cos(a)*80,y2=cy+Math.sin(a)*80;
+    altCtx.beginPath();altCtx.moveTo(x1,y1);altCtx.lineTo(x2,y2);altCtx.stroke();
+    altCtx.fillText(i,cx+Math.cos(a)*58,cy+Math.sin(a)*58+3);
+  }
+  const a=Math.PI*.75+(val/max)*Math.PI*1.5;
+  altCtx.strokeStyle='#0af';altCtx.lineWidth=3;
+  altCtx.beginPath();altCtx.moveTo(cx,cy);
+  altCtx.lineTo(cx+Math.cos(a)*62,cy+Math.sin(a)*62);altCtx.stroke();
+  altCtx.fillStyle='#ddd';altCtx.beginPath();altCtx.arc(cx,cy,4,0,Math.PI*2);altCtx.fill();
+  altCtx.fillStyle='#0ff';altCtx.font='bold 12px monospace';
+  altCtx.fillText(Math.round(val)+' м',cx,cy+30);
+}
+
+// VSI — вариометр (-20..+20 м/с)
+function drawVSI(){
+  const {cx,cy}=clearGauge(vsiCtx);
+  const max=20;
+  const val=Math.max(-max,Math.min(max,state.vs));
+  // шкала
+  vsiCtx.strokeStyle='#aaa';vsiCtx.lineWidth=1;
+  vsiCtx.fillStyle='#fff';vsiCtx.font='bold 9px Arial';vsiCtx.textAlign='center';
+  for(let i=-4;i<=4;i++){
+    const a=Math.PI/2+(i/4)*(Math.PI*.75);
+    const x1=cx+Math.cos(a)*70,y1=cy+Math.sin(a)*70;
+    const x2=cx+Math.cos(a)*80,y2=cy+Math.sin(a)*80;
+    vsiCtx.beginPath();vsiCtx.moveTo(x1,y1);vsiCtx.lineTo(x2,y2);vsiCtx.stroke();
+    vsiCtx.fillText(i*5,cx+Math.cos(a)*58,cy+Math.sin(a)*58+3);
+  }
+  // стрелка
+  const a=Math.PI/2+(val/max)*(Math.PI*.75);
+  vsiCtx.strokeStyle='#0f0';vsiCtx.lineWidth=3;
+  vsiCtx.beginPath();vsiCtx.moveTo(cx,cy);
+  vsiCtx.lineTo(cx+Math.cos(a)*62,cy+Math.sin(a)*62);vsiCtx.stroke();
+  vsiCtx.fillStyle='#ddd';vsiCtx.beginPath();vsiCtx.arc(cx,cy,4,0,Math.PI*2);vsiCtx.fill();
+  vsiCtx.fillStyle='#0f0';vsiCtx.font='bold 11px monospace';
+  vsiCtx.fillText((val>0?'+':'')+val.toFixed(1)+' м/с',cx,cy+30);
+}
+
+// Обновление правой панели
+function updateHUD(){
+  document.getElementById('rThrottle').textContent=Math.round(state.throttle*100)+'%';
+  document.getElementById('throttleFill').style.width=(state.throttle*100)+'%';
+  document.getElementById('throttleValue').textContent=Math.round(state.throttle*100)+'%';
+  document.getElementById('rBrake').textContent=state.brakes?'ВКЛ':'ОТКЛ';
+  document.getElementById('rBrake').className='val '+(state.brakes?'warn':'');
+  }
+// ============ ФИЗИКА ПОЛЁТА ============
+function updatePhysics(dt){
+  if(state.crashed)return;
+
+  // На земле?
+  const groundLevel=1.5;
+  const wasOnGround=state.onGround;
+  state.onGround=(state.y<=groundLevel+0.5);
+
+  // ---- ТЯГА ----
+  let thrust=state.throttle*MAX_THRUST;
+  if(state.reverse&&state.onGround)thrust=-thrust*0.6;
+
+  // ---- СИЛЫ В ЛОКАЛЬНЫХ ОСЯХ ----
+  // Скорость вперёд (локально)
+  const cosP=Math.cos(state.pitch),sinP=Math.sin(state.pitch);
+  const cosY=Math.cos(state.yaw),sinY=Math.sin(state.yaw);
+  const cosR=Math.cos(state.roll),sinR=Math.sin(state.roll);
+
+  // Мировая скорость (упрощённо через vx,vy,vz)
+  const speedTotal=Math.sqrt(state.vx*state.vx+state.vy*state.vy+state.vz*state.vz);
+  state.ias=speedTotal;
+
+  // Угол атаки (упрощённо)
+  const forwardSpeed=state.vx;
+  const verticalSpeed=state.vy;
+  const alpha=Math.atan2(verticalSpeed,Math.abs(forwardSpeed)+1);
+
+  // ---- УПРАВЛЕНИЕ (моменты) ----
+  if(state.autopilot){
+    // автопилот держит высоту и выравнивает крен
+    const altErr=state.apTargetAlt-state.alt;
+    state.elevator=Math.max(-0.3,Math.min(0.3,altErr*0.005));
+    state.aileron=-state.roll*0.5;
+  }
+
+  const controlEff=Math.min(1,speedTotal/50+0.1);
+  const pitchRate=state.elevator*1.5*controlEff;
+  const rollRate=state.aileron*2.0*controlEff;
+  const yawRate=state.rudder*0.8*(state.onGround?1:0.4)+state.roll*0.5*Math.min(1,speedTotal/80);
+
+  state.pitch+=pitchRate*dt;
+  state.roll+=rollRate*dt;
+  state.yaw+=yawRate*dt;
+
+  // Ограничения
+  state.pitch=Math.max(-Math.PI/4,Math.min(Math.PI/4,state.pitch));
+  state.roll=Math.max(-Math.PI/2,Math.min(Math.PI/2,state.roll));
+  // автовыравнивание крена при отпускании
+  if(Math.abs(state.aileron)<0.05)state.roll*=0.99;
+
+  // ---- АЭРОДИНАМИКА ----
+  // Подъёмная сила
+  const cl=CL0+CLalpha*alpha;
+  const q=0.5*1.225*speedTotal*speedTotal*WING_AREA;
+  const lift=q*cl;
+  // Сопротивление
+  const cd=CD0+cl*cl*0.05+(state.spoilers?0.15:0)+(state.flaps*0.03);
+  const drag=q*cd;
+  // Боковое сопротивление от крена (упрощённо)
+  const sideDrag=state.roll*50;
+
+  // ---- ПРИМЕНЕНИЕ СИЛ ----
+  // Тяга вперёд по курсу
+  const thrustX=Math.cos(state.yaw)*Math.cos(state.pitch)*thrust;
+  const thrustY=Math.sin(state.pitch)*thrust*0.3;
+  const thrustZ=Math.sin(state.yaw)*Math.cos(state.pitch)*thrust;
+
+  // Подъёмная сила вертикально (упрощённо)
+  const liftY=lift*Math.cos(state.roll)*Math.cos(state.pitch);
+  const liftX=-lift*Math.sin(state.pitch);
+
+  // Сопротивление против скорости
+  let dragX=0,dragY=0,dragZ=0;
+  if(speedTotal>0.1){
+    dragX=-drag*state.vx/speedTotal;
+    dragY=-drag*state.vy/speedTotal;
+    dragZ=-drag*state.vz/speedTotal;
+  }
+
+  // Гравитация
+  const gravY=-GRAVITY*MASS*0.5;
+
+  // Ускорения
+  const ax=(thrustX+liftX+dragX)/MASS;
+  const ay=(thrustY+liftY+dragY+gravY/MASS*10)/MASS;
+  const az=(thrustZ+dragZ-sideDrag*0)/MASS;
+
+  state.vx+=ax*dt*10;
+  state.vy+=ay*dt*8;
+  state.vz+=az*dt*10;
+
+  // Трение в воздухе
+  state.vx*=0.999;
+  state.vy*=0.999;
+  state.vz*=0.999;
+
+  // ---- ПОЛОЖЕНИЕ ----
+  state.x+=state.vx*dt;
+  state.y+=state.vy*dt;
+  state.z+=state.vz*dt;
+
+  // Высота
+  state.alt=state.y;
+  // Вертикальная скорость
+  state.vs=state.vy;
+
+  // ---- НА ЗЕМЛЕ ----
+  if(state.onGround&&!wasOnGround){
+    state.vy=Math.min(0,state.vy*0.3);
+    state.y=groundLevel;
+  }
+  if(state.onGround){
+    // тормоза
+    if(state.brakes){
+      state.vx*=0.95;
+      state.vz*=0.95;
+    } else {
+      state.vx*=0.998;
+      state.vz*=0.998;
+    }
+    // трение шасси
+    state.vx*=0.999;
+    state.vz*=0.999;
+    // на земле нос выравнивается, если скорость мала
+    if(speedTotal<10){
+      state.pitch*=0.95;
+      state.roll*=0.9;
+    }
+    // если шасси убрано и на земле — садимся на брюхо
+    if(!state.gearDown&&speedTotal>10){
+      state.vx*=0.95;
+    }
+    state.y=groundLevel;
+    if(state.vy>0.5)state.onGround=false;
+  }
+
+  // Крэш
+  if(state.y<-5){
+    state.crashed=true;
+    showMsg('РАЗБИЛСЯ!\nОбнови страницу чтобы начать заново');
+    return;
+  }
+  // Сваливание
+  if(speedTotal<30&&!state.onGround&&state.alt>50){
+    state.stalled=true;
+  } else {
+    state.stalled=false;
+  }
+
+  // ---- ОБНОВЛЕНИЕ МОДЕЛИ ----
+  plane.group.position.set(state.x,state.y,state.z);
+  plane.group.rotation.set(0,0,0);
+  plane.group.rotateY(state.yaw);
+  plane.group.rotateZ(state.pitch);
+  plane.group.rotateX(state.roll);
+
+  // винты вращаются
+  const propSpeed=state.throttle*50+2;
+  for(const p of plane.propellers)p.rotation.x+=propSpeed*dt;
+
+  // ветряки вращаются
+  for(const w of windmills)for(const b of w.userData.blades)b.rotation.z+=0.3*dt;
+}
+
+// ============ ЗВУК ============
+let audioCtx=null,engineOsc=null,engineGain=null;
+function initAudio(){
+  if(audioCtx)return;
+  try{
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    engineOsc=audioCtx.createOscillator();
+    engineOsc.type='sawtooth';
+    engineOsc.frequency.value=60;
+    engineGain=audioCtx.createGain();
+    engineGain.gain.value=0;
+    const filt=audioCtx.createBiquadFilter();
+    filt.type='lowpass';filt.frequency.value=1200;
+    engineOsc.connect(filt);filt.connect(engineGain);engineGain.connect(audioCtx.destination);
+    engineOsc.start();
+  }catch(e){}
+}
+function updateAudio(){
+  if(!audioCtx||!engineOsc)return;
+  const freq=40+state.throttle*120+state.ias*0.5;
+  engineOsc.frequency.setTargetAtTime(freq,audioCtx.currentTime,.1);
+  const vol=0.05+state.throttle*0.15;
+  engineGain.gain.setTargetAtTime(vol,audioCtx.currentTime,.1);
+}
+
+// ============ КАМЕРА (ВИД ИЗ КАБИНЫ) ============
+function updateCamera(){
+  // камера внутри кабины, чуть сзади носа
+  const offset=new THREE.Vector3(1.5,1.2,0);
+  offset.applyEuler(plane.group.rotation);
+  camera.position.set(
+    plane.group.position.x+offset.x,
+    plane.group.position.y+offset.y,
+    plane.group.position.z+offset.z
+  );
+  // куда смотрит — вперёд по курсу самолёта с учётом pitch
+  const lookDir=new THREE.Vector3(30,0,0);
+  lookDir.applyEuler(plane.group.rotation);
+  camera.lookAt(
+    camera.position.x+lookDir.x,
+    camera.position.y+lookDir.y,
+    camera.position.z+lookDir.z
+  );
+}
+
+// ============ ЦИКЛ ============
+const clock=new THREE.Clock();
+let hudTimer=0;
+
+function loop(){
+  requestAnimationFrame(loop);
+  const dt=Math.min(clock.getDelta(),0.05);
+
+  updatePhysics(dt);
+  updateCamera();
+  updateAudio();
+
+  hudTimer+=dt;
+  if(hudTimer>0.1){
+    hudTimer=0;
+    drawASI();
+    drawALT();
+    drawVSI();
+    updateHUD();
+  }
+
+  renderer.render(scene,camera);
+}
+
+// Стартовая подсказка — при тапе включаем звук и убираем подсказку
+document.body.addEventListener('touchstart',()=>{initAudio();},{once:true});
+document.body.addEventListener('click',()=>{initAudio();},{once:true});
+
+loop();
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
