@@ -794,26 +794,26 @@ function updateAudio(){
   engineOsc.frequency.setTargetAtTime(freq,audioCtx.currentTime,.1);
   const vol=0.05+state.throttle*0.15;
   engineGain.gain.setTargetAtTime(vol,audioCtx.currentTime,.1);
-}
-
-// ============ КАМЕРА (ВИД ИЗ КАБИНЫ) ============
 function updateCamera(){
-  // камера внутри кабины, чуть сзади носа
-  const offset=new THREE.Vector3(1.5,1.2,0);
+  // Камера сзади-сверху самолёта
+  const offset=new THREE.Vector3(-18,6,0);  // сзади на 18м, выше на 6м
   offset.applyEuler(plane.group.rotation);
   camera.position.set(
     plane.group.position.x+offset.x,
     plane.group.position.y+offset.y,
     plane.group.position.z+offset.z
   );
-  // куда смотрит — вперёд по курсу самолёта с учётом pitch
-  const lookDir=new THREE.Vector3(30,0,0);
+  // Смотрим вперёд, чуть выше носа
+  const lookDir=new THREE.Vector3(20,1,0);
   lookDir.applyEuler(plane.group.rotation);
   camera.lookAt(
     camera.position.x+lookDir.x,
     camera.position.y+lookDir.y,
     camera.position.z+lookDir.z
   );
+}
+  
+  
 }
 
 // ============ ЦИКЛ ============
